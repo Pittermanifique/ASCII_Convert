@@ -15,4 +15,5 @@ venv/
 *.tmp
 *.mov
 *.mp4
+*.mkv
 

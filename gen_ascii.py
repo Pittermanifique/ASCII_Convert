@@ -4,6 +4,47 @@ import subprocess
 from PIL import Image, ImageDraw, ImageFont
 from tqdm import tqdm
 
+def frame_to_ascii_image(frame, new_width, font, ascii_chars=" .:-=+*#%@"):
+    # Conversion OpenCV (BGR) -> Pillow (L pour grayscale)
+    frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+    image_pillow = Image.fromarray(frame_rgb).convert("L")
+
+    # Calcul dimensions adaptées
+    width, height = image_pillow.size
+    aspect_ratio = height / width
+    new_height = int(aspect_ratio * new_width)
+
+    # Redimensionnement
+    image_pillow = image_pillow.resize((new_width, new_height))
+    pixels = image_pillow.load()
+
+    # Taille caractère
+    char_width = font.getbbox("M")[2] - font.getbbox("M")[0]
+    char_height = font.getbbox("M")[3] - font.getbbox("M")[1]
+
+    # Génération ASCII
+    ascii_lines = []
+    for y in range(new_height):
+        line = ""
+        for x in range(new_width):
+            pixel_value = pixels[x, y]
+            index = min(int(pixel_value / 256 * len(ascii_chars)), len(ascii_chars) - 1)
+            line += ascii_chars[index]
+        ascii_lines.append(line)
+
+    # Création image texte
+    frame_width = new_width * char_width
+    frame_height = new_height * char_height
+    img_txt = Image.new("RGB", (frame_width, frame_height), color="black")
+    draw = ImageDraw.Draw(img_txt)
+
+    # Dessin caractère par caractère
+    for y, line in enumerate(ascii_lines):
+        for x, ch in enumerate(line):
+            draw.text((x * char_width, y * char_height), ch, fill="white", font=font)
+
+    return img_txt
+
 def video_to_ascii(
     video_path,
     output_final="ascii_with_audio.mp4",
@@ -12,34 +53,32 @@ def video_to_ascii(
     font_path=r"fonts\cour.ttf",
     with_audio=True
 ):
-    # 🎥 Charger la vidéo
+    # Charger la vidéo
     cap = cv2.VideoCapture(video_path)
     if not cap.isOpened():
         print("❌ Impossible d'ouvrir la vidéo.")
         return
 
-    video_width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
-    video_height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
     fps = cap.get(cv2.CAP_PROP_FPS)
     total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
 
-    aspect_ratio = video_height / video_width
-    new_height = int(aspect_ratio * new_width)
-
-    # Police monospace
+    # Charger la police
     try:
         font = ImageFont.truetype(font_path, font_size)
     except:
         print("⚠️ Police non trouvée, utilisation de la police par défaut")
         font = ImageFont.load_default()
 
-    # Dimensions fixes pour un caractère
-    char_width = font.getbbox("M")[2] - font.getbbox("M")[0]
-    char_height = font.getbbox("M")[3] - font.getbbox("M")[1]
+    # Test rapide : générer une frame ASCII pour connaître la taille finale
+    ret, test_frame = cap.read()
+    if not ret:
+        print("❌ Impossible de lire la première frame.")
+        return
+    test_img = frame_to_ascii_image(test_frame, new_width, font)
+    frame_width, frame_height = test_img.size
 
-    # Taille finale de la vidéo ASCII
-    frame_width = new_width * char_width
-    frame_height = new_height * char_height
+    # Réinitialiser la vidéo (après test_frame)
+    cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
 
     # Sortie temporaire muette
     output_ascii = "ascii_video.mp4"
@@ -48,41 +87,15 @@ def video_to_ascii(
     fourcc = cv2.VideoWriter_fourcc(*'mp4v')
     out = cv2.VideoWriter(output_ascii, fourcc, fps, (frame_width, frame_height))
 
-    # Jeu de caractères ASCII
-    ascii_char = " .:-=+*#%@"
-
     # 🔄 Génération frame par frame
     for _ in tqdm(range(total_frames), desc="Génération ASCII vidéo"):
         ret, frame = cap.read()
         if not ret:
             break
 
-        # Conversion en niveaux de gris
-        frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-        image_pillow = Image.fromarray(frame_rgb).convert("L")
-        image_pillow = image_pillow.resize((new_width, new_height))
-        pixels = image_pillow.load()
+        img_txt = frame_to_ascii_image(frame, new_width, font)
 
-        # Génération ASCII
-        ascii_lines = []
-        for y in range(new_height):
-            ligne = ""
-            for x in range(new_width):
-                pixel_value = pixels[x, y]
-                index = min(int(pixel_value / 256 * len(ascii_char)), len(ascii_char) - 1)
-                ligne += ascii_char[index]
-            ascii_lines.append(ligne)
-
-        # Création image texte
-        img_txt = Image.new("RGB", (frame_width, frame_height), color="black")
-        draw = ImageDraw.Draw(img_txt)
-
-        # Dessiner caractère par caractère (grille bien alignée)
-        for y, line in enumerate(ascii_lines):
-            for x, ch in enumerate(line):
-                draw.text((x * char_width, y * char_height), ch, fill="white", font=font)
-
-        # Conversion pour OpenCV
+        # Conversion Pillow -> OpenCV
         frame_bgr = cv2.cvtColor(np.array(img_txt), cv2.COLOR_RGB2BGR)
         out.write(frame_bgr)
 
